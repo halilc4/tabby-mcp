@@ -1,6 +1,8 @@
 """CDP connection and helper methods for Tabby."""
 
 import time
+import urllib.request
+import json as json_module
 from typing import Any
 
 import pychrome
@@ -12,38 +14,70 @@ class TabbyConnection:
     def __init__(self, port: int = 9222):
         self.port = port
         self.browser: pychrome.Browser | None = None
-        self.tab: pychrome.Tab | None = None
+        self._tabs: dict[str, pychrome.Tab] = {}  # ws_url -> Tab cache
 
-    def connect(self) -> None:
-        """Establish CDP connection to Tabby."""
-        self.browser = pychrome.Browser(url=f"http://localhost:{self.port}")
+    def ensure_browser(self) -> None:
+        """Ensure browser connection is active."""
+        if not self.browser:
+            self.browser = pychrome.Browser(url=f"http://localhost:{self.port}")
+
+    def list_targets(self) -> list[dict]:
+        """List available CDP targets (tabs)."""
+        url = f"http://localhost:{self.port}/json"
+        with urllib.request.urlopen(url) as response:
+            targets = json_module.loads(response.read().decode())
+        return [
+            {"index": i, "url": t.get("url", ""), "ws_url": t.get("webSocketDebuggerUrl", "")}
+            for i, t in enumerate(targets)
+            if t.get("type") == "page"
+        ]
+
+    def get_tab(self, target: int | str) -> pychrome.Tab:
+        """Get tab by index or ws_url, with caching."""
+        self.ensure_browser()
         tabs = self.browser.list_tab()
         if not tabs:
             raise ConnectionError("No Tabby tabs found")
-        self.tab = tabs[0]
-        self.tab.start()
+
+        # Resolve target to tab
+        if isinstance(target, int):
+            tab = tabs[target]  # supports -1 for last
+        else:
+            tab = None
+            for t in tabs:
+                if t.websocket_url == target:
+                    tab = t
+                    break
+            if not tab:
+                raise ValueError(f"Target not found: {target}")
+
+        # Cache by ws_url
+        ws_url = tab.websocket_url
+        if ws_url not in self._tabs:
+            tab.start()
+            self._tabs[ws_url] = tab
+
+        return self._tabs[ws_url]
 
     def disconnect(self) -> None:
-        """Close CDP connection."""
-        if self.tab:
-            self.tab.stop()
-            self.tab = None
+        """Close all CDP connections."""
+        for tab in self._tabs.values():
+            try:
+                tab.stop()
+            except Exception:
+                pass
+        self._tabs.clear()
         self.browser = None
 
-    def ensure_connected(self) -> None:
-        """Ensure connection is active, reconnect if needed."""
-        if not self.tab:
-            self.connect()
-
-    def execute_js(self, expression: str) -> Any:
+    def execute_js(self, expression: str, target: int | str) -> Any:
         """Execute JavaScript in Tabby context and return result."""
-        self.ensure_connected()
-        result = self.tab.Runtime.evaluate(expression=expression, returnByValue=True)
+        tab = self.get_tab(target)
+        result = tab.Runtime.evaluate(expression=expression, returnByValue=True)
         if "exceptionDetails" in result:
             raise RuntimeError(result["exceptionDetails"]["text"])
         return result.get("result", {}).get("value")
 
-    def query(self, selector: str) -> list[dict]:
+    def query(self, selector: str, target: int | str) -> list[dict]:
         """Query elements by CSS selector, return list with element info."""
         js = f"""
         (() => {{
@@ -58,9 +92,9 @@ class TabbyConnection:
             }}));
         }})()
         """
-        return self.execute_js(js) or []
+        return self.execute_js(js, target) or []
 
-    def click(self, selector: str, index: int = 0) -> bool:
+    def click(self, selector: str, target: int | str, index: int = 0) -> bool:
         """Click element matching selector."""
         js = f"""
         (() => {{
@@ -72,9 +106,9 @@ class TabbyConnection:
             return false;
         }})()
         """
-        return self.execute_js(js)
+        return self.execute_js(js, target)
 
-    def get_text(self, selector: str) -> str | None:
+    def get_text(self, selector: str, target: int | str) -> str | None:
         """Get text content of element."""
         js = f"""
         (() => {{
@@ -82,14 +116,14 @@ class TabbyConnection:
             return el ? el.textContent : null;
         }})()
         """
-        return self.execute_js(js)
+        return self.execute_js(js, target)
 
-    def wait_for(self, selector: str, timeout: float = 5.0) -> bool:
+    def wait_for(self, selector: str, target: int | str, timeout: float = 5.0) -> bool:
         """Wait for element to exist, return True if found."""
         start = time.time()
         while time.time() - start < timeout:
             js = f"document.querySelector({repr(selector)}) !== null"
-            if self.execute_js(js):
+            if self.execute_js(js, target):
                 return True
             time.sleep(0.1)
         return False

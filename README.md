@@ -15,6 +15,20 @@ A lightweight MCP (Model Context Protocol) server that enables control of the [T
 
 ## Installation
 
+### From PyPI (recommended)
+
+```bash
+pip install tabby-mcp
+```
+
+Or with uv:
+
+```bash
+uv pip install tabby-mcp
+```
+
+### From source
+
 ```bash
 git clone https://github.com/halilc4/tabby-mcp.git
 cd tabby-mcp

@@ -2,11 +2,29 @@
 name = "tabby-mcp"
 version = "0.1.0"
 description = "MCP server for controlling Tabby terminal via Chrome DevTools Protocol"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Igor Halilović", email = "halilc4@gmail.com" }]
+keywords = ["mcp", "tabby", "terminal", "cdp", "chrome-devtools-protocol"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
 requires-python = ">=3.10"
 dependencies = [
     "mcp>=1.0.0",
     "pychrome>=0.2.4",
 ]
+
+[project.urls]
+Homepage = "https://github.com/halilc4/tabby-mcp"
+Repository = "https://github.com/halilc4/tabby-mcp"
+Issues = "https://github.com/halilc4/tabby-mcp/issues"
 
 [build-system]
 requires = ["hatchling"]

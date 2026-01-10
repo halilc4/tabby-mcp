@@ -128,6 +128,15 @@ class TabbyConnection:
             time.sleep(0.1)
         return False
 
+    def screenshot(self, target: int | str, format: str = "png", quality: int = 80) -> str:
+        """Capture screenshot, return base64 encoded image."""
+        tab = self.get_tab(target)
+        params: dict[str, Any] = {"format": format}
+        if format == "jpeg":
+            params["quality"] = quality
+        result = tab.Page.captureScreenshot(**params)
+        return result["data"]
+
 
 # Global connection instance
 _connection: TabbyConnection | None = None

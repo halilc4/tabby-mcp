@@ -9,7 +9,7 @@ server.py  ->  tools.py  ->  cdp.py  ->  Tabby (CDP port 9222)
 ```
 
 - `server.py` - MCP server entry point, stdio transport
-- `tools.py` - MCP tool definicije (execute_js, query)
+- `tools.py` - MCP tool definicije (execute_js, query, screenshot)
 - `cdp.py` - TabbyConnection klasa, CDP komunikacija
 
 ## Razvoj
@@ -31,6 +31,7 @@ uv run tabby-mcp
 |------|------|
 | `execute_js` | Execute JS u Tabby kontekstu |
 | `query` | Query DOM elemente po CSS selektoru |
+| `screenshot` | Capture screenshot Tabby prozora |
 
 ## CDP Helper metode (cdp.py)
 
@@ -39,6 +40,7 @@ uv run tabby-mcp
 - `click(selector, index)` - Klikni element
 - `get_text(selector)` - Vrati textContent
 - `wait_for(selector, timeout)` - Cekaj da element postoji
+- `screenshot(format, quality)` - Capture screenshot, vrati base64
 
 ## Konvencije
 

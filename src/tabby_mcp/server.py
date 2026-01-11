@@ -1,12 +1,22 @@
 """Tabby MCP Server - Entry point."""
 
 import asyncio
+import logging
 import sys
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
 from .tools import register_tools
+
+
+def setup_logging() -> None:
+    """Configure logging to stderr."""
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        stream=sys.stderr,
+    )
 
 
 def create_server() -> Server:
@@ -30,12 +40,13 @@ async def run_server() -> None:
 
 def main() -> None:
     """Main entry point."""
+    setup_logging()
     try:
         asyncio.run(run_server())
     except KeyboardInterrupt:
         pass
     except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
+        logging.exception("Server crashed")
         sys.exit(1)
 
 

@@ -1,6 +1,7 @@
 """CDP connection and helper methods for Tabby."""
 
 import logging
+import threading
 import time
 import urllib.request
 import json as json_module
@@ -9,6 +10,16 @@ from typing import Any
 import pychrome
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_selector(selector: str) -> str:
+    """Escape selector for safe JS embedding."""
+    return json_module.dumps(selector)
+
+
+def _js_iife(body: str) -> str:
+    """Wrap JS body in IIFE for isolated scope."""
+    return f"(() => {{ {body} }})()"
 
 
 class TabbyConnection:
@@ -44,25 +55,35 @@ class TabbyConnection:
     def get_tab(self, target: int | str) -> pychrome.Tab:
         """Get tab by index or ws_url, with caching."""
         logger.debug("Getting tab: %s", target)
+
+        # For ws_url string, check cache first then fetch directly
+        if isinstance(target, str):
+            if target in self._tabs:
+                return self._tabs[target]
+
+            # Verify ws_url exists via /json endpoint
+            url = f"http://localhost:{self.port}/json"
+            with urllib.request.urlopen(url) as response:
+                targets = json_module.loads(response.read().decode())
+
+            for t in targets:
+                if t.get("webSocketDebuggerUrl") == target:
+                    tab = pychrome.Tab(webSocketDebuggerUrl=target)
+                    tab.start()
+                    self._tabs[target] = tab
+                    return tab
+
+            raise ValueError(f"Target not found: {target}")
+
+        # For index, use browser.list_tab()
         self.ensure_browser()
         tabs = self.browser.list_tab()
         if not tabs:
             raise ConnectionError("No Tabby tabs found")
 
-        # Resolve target to tab
-        if isinstance(target, int):
-            tab = tabs[target]  # supports -1 for last
-        else:
-            tab = None
-            for t in tabs:
-                if t.websocket_url == target:
-                    tab = t
-                    break
-            if not tab:
-                raise ValueError(f"Target not found: {target}")
-
-        # Cache by ws_url
+        tab = tabs[target]  # supports -1 for last
         ws_url = tab.websocket_url
+
         if ws_url not in self._tabs:
             tab.start()
             self._tabs[ws_url] = tab
@@ -74,8 +95,8 @@ class TabbyConnection:
         for tab in self._tabs.values():
             try:
                 tab.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Failed to stop tab: %s", e)
         self._tabs.clear()
         self.browser = None
 
@@ -116,9 +137,16 @@ class TabbyConnection:
     ) -> list[dict]:
         """Query elements by CSS selector, return list with element info."""
         logger.debug("query: selector=%s, children=%s, text=%s", selector, include_children, include_text)
-        js = f"""
-        (() => {{
-            const elements = document.querySelectorAll({repr(selector)});
+        children_js = """
+                result.children = Array.from(el.children).slice(0, 10).map(c => ({
+                    tagName: c.tagName.toLowerCase(),
+                    id: c.id || null,
+                    className: c.className || null
+                }));""" if include_children else ""
+        text_js = """
+                result.textContent = el.textContent?.substring(0, 200) || null;""" if include_text else ""
+        js = _js_iife(f"""
+            const elements = document.querySelectorAll({_safe_selector(selector)});
             return Array.from(elements).map((el, i) => {{
                 const attrs = {{}};
                 for (const attr of el.attributes) {{
@@ -131,22 +159,11 @@ class TabbyConnection:
                     className: el.className || null,
                     attributes: attrs,
                     childCount: el.children.length
-                }};
-                {"" if not include_children else '''
-                result.children = Array.from(el.children).slice(0, 10).map(c => ({
-                    tagName: c.tagName.toLowerCase(),
-                    id: c.id || null,
-                    className: c.className || null
-                }));
-                '''}
-                {"" if not include_text else '''
-                result.textContent = el.textContent?.substring(0, 200) || null;
-                '''}
+                }};{children_js}{text_js}
                 return result;
             }});
-        }})()
-        """
-        return self.execute_js(js, target) or []
+        """)
+        return self.execute_js(js, target, wrap=False) or []
 
     def query_with_retry(
         self,
@@ -171,27 +188,23 @@ class TabbyConnection:
 
     def click(self, selector: str, target: int | str, index: int = 0) -> bool:
         """Click element matching selector."""
-        js = f"""
-        (() => {{
-            const elements = document.querySelectorAll({repr(selector)});
+        js = _js_iife(f"""
+            const elements = document.querySelectorAll({_safe_selector(selector)});
             if (elements[{index}]) {{
                 elements[{index}].click();
                 return true;
             }}
             return false;
-        }})()
-        """
-        return self.execute_js(js, target)
+        """)
+        return self.execute_js(js, target, wrap=False)
 
     def get_text(self, selector: str, target: int | str) -> str | None:
         """Get text content of element."""
-        js = f"""
-        (() => {{
-            const el = document.querySelector({repr(selector)});
+        js = _js_iife(f"""
+            const el = document.querySelector({_safe_selector(selector)});
             return el ? el.textContent : null;
-        }})()
-        """
-        return self.execute_js(js, target)
+        """)
+        return self.execute_js(js, target, wrap=False)
 
     def wait_for(
         self,
@@ -208,20 +221,21 @@ class TabbyConnection:
             timeout: Max wait time in seconds
             visible: If True, also wait for element to have dimensions > 0
         """
+        safe = _safe_selector(selector)
         start = time.time()
         while time.time() - start < timeout:
             if visible:
-                js = f"""
-                (() => {{
-                    const el = document.querySelector({repr(selector)});
+                js = _js_iife(f"""
+                    const el = document.querySelector({safe});
                     if (!el) return false;
                     const rect = el.getBoundingClientRect();
                     return rect.width > 0 && rect.height > 0;
-                }})()
-                """
+                """)
+                if self.execute_js(js, target, wrap=False):
+                    return True
             else:
-                js = f"document.querySelector({repr(selector)}) !== null"
-            if self.execute_js(js, target):
+                js = f"document.querySelector({safe}) !== null"
+            if self.execute_js(js, target, wrap=False):
                 return True
             time.sleep(0.1)
         return False
@@ -242,31 +256,62 @@ class TabbyConnection:
         start = time.time()
         while time.time() - start < timeout:
             try:
-                if self.execute_js(js, target):
+                if self.execute_js(js, target, wrap=False):
                     return True
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Angular check failed: %s", e)
             time.sleep(0.05)
         return True  # Timeout - proceed anyway
 
-    def screenshot(self, target: int | str, format: str = "png", quality: int = 80) -> str:
-        """Capture screenshot, return base64 encoded image."""
+    def screenshot(self, target: int | str, format: str = "jpeg", quality: int = 80) -> str:
+        """Capture screenshot, return base64 encoded image.
+
+        Image is scaled down if either dimension exceeds 2000px.
+        """
         logger.debug("screenshot: format=%s, quality=%d", format, quality)
         tab = self.get_tab(target)
+
+        # Get viewport dimensions
+        metrics = tab.Page.getLayoutMetrics()
+        width = metrics["cssLayoutViewport"]["clientWidth"]
+        height = metrics["cssLayoutViewport"]["clientHeight"]
+
+        # Calculate scale to fit within 2000px
+        scale = min(1.0, 2000 / width, 2000 / height)
+
         params: dict[str, Any] = {"format": format}
         if format == "jpeg":
             params["quality"] = quality
+
+        # Apply clip with scale if needed
+        if scale < 1.0:
+            logger.debug("Scaling screenshot: %dx%d -> scale=%.2f", width, height, scale)
+            params["clip"] = {
+                "x": 0,
+                "y": 0,
+                "width": width,
+                "height": height,
+                "scale": scale,
+            }
+
         result = tab.Page.captureScreenshot(**params)
         return result["data"]
 
 
 # Global connection instance
 _connection: TabbyConnection | None = None
+_connection_lock = threading.Lock()
 
 
 def get_connection(port: int = 9222) -> TabbyConnection:
-    """Get or create global connection instance."""
+    """Get or create global connection instance (thread-safe)."""
     global _connection
-    if _connection is None:
-        _connection = TabbyConnection(port)
-    return _connection
+    with _connection_lock:
+        if _connection is None:
+            _connection = TabbyConnection(port)
+        elif _connection.port != port:
+            raise ValueError(
+                f"Connection already exists on port {_connection.port}, "
+                f"cannot create on port {port}"
+            )
+        return _connection

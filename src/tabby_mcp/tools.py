@@ -2,6 +2,7 @@
 
 import json
 import logging
+from typing import Any
 
 from mcp.server import Server
 from mcp.types import Tool, TextContent, ImageContent
@@ -9,6 +10,27 @@ from mcp.types import Tool, TextContent, ImageContent
 from .cdp import get_connection
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_target(arguments: dict[str, Any]) -> int | str:
+    """Validate and return target argument."""
+    target = arguments.get("target")
+    if target is None:
+        raise ValueError("target is required")
+    if not isinstance(target, (int, str)):
+        raise ValueError(f"target must be int or str, got {type(target).__name__}")
+    return target
+
+
+def _validate_screenshot_args(arguments: dict[str, Any]) -> tuple[str, int]:
+    """Validate screenshot format and quality, return (format, quality)."""
+    fmt = arguments.get("format", "jpeg")
+    if fmt not in ("png", "jpeg"):
+        raise ValueError(f"format must be 'png' or 'jpeg', got '{fmt}'")
+    quality = arguments.get("quality", 80)
+    if not isinstance(quality, int) or not 0 <= quality <= 100:
+        raise ValueError(f"quality must be int 0-100, got {quality}")
+    return fmt, quality
 
 
 TARGET_SCHEMA = {
@@ -92,7 +114,7 @@ def register_tools(server: Server) -> None:
                         "format": {
                             "type": "string",
                             "enum": ["png", "jpeg"],
-                            "default": "png",
+                            "default": "jpeg",
                             "description": "Image format",
                         },
                         "quality": {
@@ -109,55 +131,47 @@ def register_tools(server: Server) -> None:
         ]
 
     @server.call_tool()
-    async def call_tool(name: str, arguments: dict) -> list[TextContent | ImageContent]:
-        logger.info("Tool call: %s, args: %s", name, arguments)
+    async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent | ImageContent]:
+        logger.debug("Tool call: %s, args: %s", name, arguments)
         conn = get_connection()
 
-        if name == "list_targets":
-            try:
+        try:
+            if name == "list_targets":
                 targets = conn.list_targets()
                 return [TextContent(type="text", text=json.dumps(targets, indent=2))]
-            except Exception as e:
-                logger.exception("list_targets failed")
-                return [TextContent(type="text", text=f"Error: {e}")]
 
-        elif name == "execute_js":
-            target = arguments.get("target")
-            code = arguments.get("code", "")
-            wrap = arguments.get("wrap", True)
-            try:
+            elif name == "execute_js":
+                target = _validate_target(arguments)
+                code = arguments.get("code", "")
+                if not code:
+                    raise ValueError("code is required and must be non-empty")
+                wrap = arguments.get("wrap", True)
                 result = conn.execute_js(code, target, wrap=wrap)
                 return [TextContent(type="text", text=json.dumps(result, default=str))]
-            except Exception as e:
-                logger.exception("execute_js failed")
-                return [TextContent(type="text", text=f"Error: {e}")]
 
-        elif name == "query":
-            target = arguments.get("target")
-            selector = arguments.get("selector", "")
-            include_children = arguments.get("include_children", False)
-            include_text = arguments.get("include_text", True)
-            skip_wait = arguments.get("skip_wait", False)
-            try:
+            elif name == "query":
+                target = _validate_target(arguments)
+                selector = arguments.get("selector", "")
+                if not selector:
+                    raise ValueError("selector is required and must be non-empty")
+                include_children = arguments.get("include_children", False)
+                include_text = arguments.get("include_text", True)
+                skip_wait = arguments.get("skip_wait", False)
                 if not skip_wait:
                     conn.wait_for_angular(target)
                     conn.wait_for(selector, target, timeout=2.0)
                 elements = conn.query(selector, target, include_children, include_text)
                 return [TextContent(type="text", text=json.dumps(elements, indent=2))]
-            except Exception as e:
-                logger.exception("query failed")
-                return [TextContent(type="text", text=f"Error: {e}")]
 
-        elif name == "screenshot":
-            target = arguments.get("target")
-            fmt = arguments.get("format", "png")
-            quality = arguments.get("quality", 80)
-            try:
+            elif name == "screenshot":
+                target = _validate_target(arguments)
+                fmt, quality = _validate_screenshot_args(arguments)
                 data = conn.screenshot(target, fmt, quality)
                 mime_type = "image/png" if fmt == "png" else "image/jpeg"
                 return [ImageContent(type="image", data=data, mimeType=mime_type)]
-            except Exception as e:
-                logger.exception("screenshot failed")
-                return [TextContent(type="text", text=f"Error: {e}")]
 
-        return [TextContent(type="text", text=f"Unknown tool: {name}")]
+            return [TextContent(type="text", text=f"Unknown tool: {name}")]
+
+        except Exception as e:
+            logger.exception("%s failed", name)
+            return [TextContent(type="text", text=f"Error: {e}")]

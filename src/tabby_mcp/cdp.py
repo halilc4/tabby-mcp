@@ -267,17 +267,26 @@ class TabbyConnection:
         """Capture screenshot, return base64 encoded image.
 
         Image is scaled down if either dimension exceeds 2000px.
+        Accounts for devicePixelRatio (Windows scaling).
         """
         logger.debug("screenshot: format=%s, quality=%d", format, quality)
         tab = self.get_tab(target)
 
-        # Get viewport dimensions
+        # Get viewport dimensions (CSS pixels)
         metrics = tab.Page.getLayoutMetrics()
-        width = metrics["cssLayoutViewport"]["clientWidth"]
-        height = metrics["cssLayoutViewport"]["clientHeight"]
+        css_width = metrics["cssLayoutViewport"]["clientWidth"]
+        css_height = metrics["cssLayoutViewport"]["clientHeight"]
 
-        # Calculate scale to fit within 2000px
-        scale = min(1.0, 2000 / width, 2000 / height)
+        # Get devicePixelRatio (Windows scaling factor)
+        dpr_result = tab.Runtime.evaluate(expression="window.devicePixelRatio")
+        dpr = dpr_result.get("result", {}).get("value", 1)
+
+        # Calculate actual pixel dimensions
+        actual_width = css_width * dpr
+        actual_height = css_height * dpr
+
+        # Calculate scale to fit within 2000px (based on actual pixels)
+        scale = min(1.0, 2000 / actual_width, 2000 / actual_height)
 
         params: dict[str, Any] = {"format": format}
         if format == "jpeg":
@@ -285,12 +294,15 @@ class TabbyConnection:
 
         # Apply clip with scale if needed
         if scale < 1.0:
-            logger.debug("Scaling screenshot: %dx%d -> scale=%.2f", width, height, scale)
+            logger.debug(
+                "Scaling screenshot: %dx%d (dpr=%.2f, actual=%dx%d) -> scale=%.2f",
+                css_width, css_height, dpr, int(actual_width), int(actual_height), scale
+            )
             params["clip"] = {
                 "x": 0,
                 "y": 0,
-                "width": width,
-                "height": height,
+                "width": css_width,
+                "height": css_height,
                 "scale": scale,
             }
 

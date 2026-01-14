@@ -263,23 +263,56 @@ class TabbyConnection:
             time.sleep(0.05)
         return True  # Timeout - proceed anyway
 
-    def screenshot(self, target: int | str, format: str = "jpeg", quality: int = 80) -> str:
+    def screenshot(
+        self,
+        target: int | str,
+        format: str = "jpeg",
+        quality: int = 80,
+        selector: str | None = None,
+    ) -> str:
         """Capture screenshot, return base64 encoded image.
+
+        Args:
+            target: Tab index or WebSocket URL
+            format: Image format (jpeg or png)
+            quality: JPEG quality (ignored for PNG)
+            selector: CSS selector for element screenshot (optional)
 
         Image is scaled down if either dimension exceeds 2000px.
         Accounts for devicePixelRatio (Windows scaling).
         """
-        logger.debug("screenshot: format=%s, quality=%d", format, quality)
+        logger.debug("screenshot: format=%s, quality=%d, selector=%s", format, quality, selector)
         tab = self.get_tab(target)
-
-        # Get viewport dimensions (CSS pixels)
-        metrics = tab.Page.getLayoutMetrics()
-        css_width = metrics["cssLayoutViewport"]["clientWidth"]
-        css_height = metrics["cssLayoutViewport"]["clientHeight"]
 
         # Get devicePixelRatio (Windows scaling factor)
         dpr_result = tab.Runtime.evaluate(expression="window.devicePixelRatio")
         dpr = dpr_result.get("result", {}).get("value", 1)
+
+        if selector:
+            # Get element bounds
+            bounds_result = tab.Runtime.evaluate(
+                expression=f"""
+                (() => {{
+                    const el = document.querySelector({repr(selector)});
+                    if (!el) return null;
+                    const r = el.getBoundingClientRect();
+                    return {{ x: r.x, y: r.y, width: r.width, height: r.height }};
+                }})()
+                """,
+                returnByValue=True,
+            )
+            bounds = bounds_result.get("result", {}).get("value")
+            if not bounds:
+                raise ValueError(f"Element not found: {selector}")
+
+            css_x, css_y = bounds["x"], bounds["y"]
+            css_width, css_height = bounds["width"], bounds["height"]
+        else:
+            # Get viewport dimensions (CSS pixels)
+            metrics = tab.Page.getLayoutMetrics()
+            css_x, css_y = 0, 0
+            css_width = metrics["cssLayoutViewport"]["clientWidth"]
+            css_height = metrics["cssLayoutViewport"]["clientHeight"]
 
         # Calculate actual pixel dimensions
         actual_width = css_width * dpr
@@ -292,15 +325,15 @@ class TabbyConnection:
         if format == "jpeg":
             params["quality"] = quality
 
-        # Apply clip with scale if needed
-        if scale < 1.0:
+        # Apply clip for element or when scaling needed
+        if selector or scale < 1.0:
             logger.debug(
-                "Scaling screenshot: %dx%d (dpr=%.2f, actual=%dx%d) -> scale=%.2f",
-                css_width, css_height, dpr, int(actual_width), int(actual_height), scale
+                "Screenshot clip: x=%.0f, y=%.0f, %dx%d (dpr=%.2f, actual=%dx%d) -> scale=%.2f",
+                css_x, css_y, css_width, css_height, dpr, int(actual_width), int(actual_height), scale
             )
             params["clip"] = {
-                "x": 0,
-                "y": 0,
+                "x": css_x,
+                "y": css_y,
                 "width": css_width,
                 "height": css_height,
                 "scale": scale,

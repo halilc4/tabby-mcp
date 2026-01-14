@@ -32,7 +32,7 @@ uv run tabby-mcp
 | `list_targets` | List CDP targets (tabs) with index, title, url, ws_url |
 | `execute_js` | Execute JS in Tabby context (async IIFE wrap by default) |
 | `query` | Query DOM elements (auto-waits for Angular) |
-| `screenshot` | Capture screenshot of Tabby window |
+| `screenshot` | Capture screenshot of Tabby window or element |
 
 ### execute_js parameters
 
@@ -50,6 +50,13 @@ uv run tabby-mcp
 Query automatically waits for Angular Zone.js stable and element existence.
 Use `skip_wait=true` only when you know the element already exists.
 
+### screenshot parameters
+
+- `target` - Tab index (0=first, -1=last) or ws_url
+- `selector` - CSS selector for element screenshot (optional, full window if omitted)
+- `format` - Image format: "png" or "jpeg" (default: "jpeg")
+- `quality` - JPEG quality 0-100 (default: 80, ignored for PNG)
+
 ## CDP Helper methods (cdp.py)
 
 - `execute_js(expression, target, wrap=True)` - Execute JS, return result. wrap=True for IIFE+async
@@ -60,7 +67,7 @@ Use `skip_wait=true` only when you know the element already exists.
 - `get_text(selector)` - Return textContent
 - `wait_for(selector, timeout, visible)` - Wait for element to exist (internal)
 - `wait_for_angular(timeout)` - Wait for Angular Zone.js stable (internal)
-- `screenshot(format, quality)` - Capture screenshot, return base64
+- `screenshot(format, quality, selector)` - Capture screenshot, return base64. selector=None for full window
 
 ## Conventions
 

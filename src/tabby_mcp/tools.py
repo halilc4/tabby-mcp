@@ -106,11 +106,15 @@ def register_tools(server: Server) -> None:
             ),
             Tool(
                 name="screenshot",
-                description="Capture screenshot of Tabby terminal window",
+                description="Capture screenshot of Tabby terminal window or specific element",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "target": TARGET_SCHEMA,
+                        "selector": {
+                            "type": "string",
+                            "description": "CSS selector for element screenshot (optional, full window if omitted)",
+                        },
                         "format": {
                             "type": "string",
                             "enum": ["png", "jpeg"],
@@ -166,7 +170,8 @@ def register_tools(server: Server) -> None:
             elif name == "screenshot":
                 target = _validate_target(arguments)
                 fmt, quality = _validate_screenshot_args(arguments)
-                data = conn.screenshot(target, fmt, quality)
+                selector = arguments.get("selector")
+                data = conn.screenshot(target, fmt, quality, selector)
                 mime_type = "image/png" if fmt == "png" else "image/jpeg"
                 return [ImageContent(type="image", data=data, mimeType=mime_type)]
 

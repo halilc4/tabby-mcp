@@ -56,6 +56,7 @@ Use `skip_wait=true` only when you know the element already exists.
 - `selector` - CSS selector for element screenshot (optional, full window if omitted)
 - `format` - Image format: "png" or "jpeg" (default: "jpeg")
 - `quality` - JPEG quality 0-100 (default: 80, ignored for PNG)
+- `save_path` - File path to save screenshot (optional, returns base64 if omitted)
 
 ## CDP Helper methods (cdp.py)
 

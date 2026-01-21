@@ -1,7 +1,9 @@
 """MCP tool definitions for Tabby."""
 
+import base64
 import json
 import logging
+from pathlib import Path
 from typing import Any
 
 from mcp.server import Server
@@ -128,6 +130,10 @@ def register_tools(server: Server) -> None:
                             "default": 80,
                             "description": "JPEG quality (ignored for PNG)",
                         },
+                        "save_path": {
+                            "type": "string",
+                            "description": "File path to save screenshot (optional, returns base64 if omitted)",
+                        },
                     },
                     "required": ["target"],
                 },
@@ -171,7 +177,15 @@ def register_tools(server: Server) -> None:
                 target = _validate_target(arguments)
                 fmt, quality = _validate_screenshot_args(arguments)
                 selector = arguments.get("selector")
+                save_path = arguments.get("save_path")
                 data = conn.screenshot(target, fmt, quality, selector)
+
+                if save_path:
+                    path = Path(save_path)
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(base64.b64decode(data))
+                    return [TextContent(type="text", text=f"Screenshot saved: {path.absolute()}")]
+
                 mime_type = "image/png" if fmt == "png" else "image/jpeg"
                 return [ImageContent(type="image", data=data, mimeType=mime_type)]
 

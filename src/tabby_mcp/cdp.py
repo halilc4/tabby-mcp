@@ -4,10 +4,14 @@ import logging
 import threading
 import time
 import urllib.request
+import urllib.error
 import json as json_module
 from typing import Any
 
 import pychrome
+
+# Timeout for CDP HTTP requests (seconds)
+CDP_TIMEOUT = 3
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +43,19 @@ class TabbyConnection:
     def list_targets(self) -> list[dict]:
         """List available CDP targets (tabs)."""
         url = f"http://localhost:{self.port}/json"
-        with urllib.request.urlopen(url) as response:
-            targets = json_module.loads(response.read().decode())
+        try:
+            with urllib.request.urlopen(url, timeout=CDP_TIMEOUT) as response:
+                targets = json_module.loads(response.read().decode())
+        except urllib.error.URLError as e:
+            raise ConnectionError(
+                f"Cannot connect to Tabby CDP on port {self.port}. "
+                f"Make sure Tabby is running with: tabby.exe --remote-debugging-port={self.port}"
+            ) from e
+        except TimeoutError:
+            raise ConnectionError(
+                f"Tabby CDP on port {self.port} not responding. "
+                f"Make sure Tabby is running with: tabby.exe --remote-debugging-port={self.port}"
+            )
         return [
             {
                 "index": i,
@@ -63,8 +78,14 @@ class TabbyConnection:
 
             # Verify ws_url exists via /json endpoint
             url = f"http://localhost:{self.port}/json"
-            with urllib.request.urlopen(url) as response:
-                targets = json_module.loads(response.read().decode())
+            try:
+                with urllib.request.urlopen(url, timeout=CDP_TIMEOUT) as response:
+                    targets = json_module.loads(response.read().decode())
+            except (urllib.error.URLError, TimeoutError) as e:
+                raise ConnectionError(
+                    f"Cannot connect to Tabby CDP on port {self.port}. "
+                    f"Make sure Tabby is running with: tabby.exe --remote-debugging-port={self.port}"
+                ) from e
 
             for t in targets:
                 if t.get("webSocketDebuggerUrl") == target:

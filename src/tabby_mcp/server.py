@@ -13,7 +13,7 @@ from .tools import register_tools
 def setup_logging() -> None:
     """Configure logging to stderr."""
     logging.basicConfig(
-        level=logging.DEBUG,
+        level=logging.WARNING,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         stream=sys.stderr,
     )

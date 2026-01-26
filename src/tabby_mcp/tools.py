@@ -1,5 +1,6 @@
 """MCP tool definitions for Tabby."""
 
+import asyncio
 import base64
 import json
 import logging
@@ -142,12 +143,18 @@ def register_tools(server: Server) -> None:
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent | ImageContent]:
+        import sys
+        print(f"[DIAG] call_tool START: {name}", file=sys.stderr, flush=True)
         logger.debug("Tool call: %s, args: %s", name, arguments)
+        print("[DIAG] getting connection...", file=sys.stderr, flush=True)
         conn = get_connection()
+        print("[DIAG] connection OK", file=sys.stderr, flush=True)
 
         try:
             if name == "list_targets":
-                targets = conn.list_targets()
+                print("[DIAG] list_targets: calling...", file=sys.stderr, flush=True)
+                targets = await asyncio.to_thread(conn.list_targets)
+                print(f"[DIAG] list_targets: got {len(targets)} targets", file=sys.stderr, flush=True)
                 return [TextContent(type="text", text=json.dumps(targets, indent=2))]
 
             elif name == "execute_js":
@@ -156,7 +163,7 @@ def register_tools(server: Server) -> None:
                 if not code:
                     raise ValueError("code is required and must be non-empty")
                 wrap = arguments.get("wrap", True)
-                result = conn.execute_js(code, target, wrap=wrap)
+                result = await asyncio.to_thread(conn.execute_js, code, target, wrap)
                 return [TextContent(type="text", text=json.dumps(result, default=str))]
 
             elif name == "query":
@@ -168,9 +175,11 @@ def register_tools(server: Server) -> None:
                 include_text = arguments.get("include_text", True)
                 skip_wait = arguments.get("skip_wait", False)
                 if not skip_wait:
-                    conn.wait_for_angular(target)
-                    conn.wait_for(selector, target, timeout=2.0)
-                elements = conn.query(selector, target, include_children, include_text)
+                    await asyncio.to_thread(conn.wait_for_angular, target)
+                    await asyncio.to_thread(conn.wait_for, selector, target, 2.0)
+                elements = await asyncio.to_thread(
+                    conn.query, selector, target, include_children, include_text
+                )
                 return [TextContent(type="text", text=json.dumps(elements, indent=2))]
 
             elif name == "screenshot":
@@ -178,12 +187,12 @@ def register_tools(server: Server) -> None:
                 fmt, quality = _validate_screenshot_args(arguments)
                 selector = arguments.get("selector")
                 save_path = arguments.get("save_path")
-                data = conn.screenshot(target, fmt, quality, selector)
+                data = await asyncio.to_thread(conn.screenshot, target, fmt, quality, selector)
 
                 if save_path:
                     path = Path(save_path)
                     path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_bytes(base64.b64decode(data))
+                    await asyncio.to_thread(path.write_bytes, base64.b64decode(data))
                     return [TextContent(type="text", text=f"Screenshot saved: {path.absolute()}")]
 
                 mime_type = "image/png" if fmt == "png" else "image/jpeg"
